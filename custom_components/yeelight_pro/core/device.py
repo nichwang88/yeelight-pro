@@ -51,6 +51,7 @@ class DeviceType(IntEnum):
     MOTION_WITH_LIGHT = 134
     ILLUMINATION_SENSOR = 135
     TEMPERATURE_HUMIDITY = 136
+    PRESENCE_SENSOR = 138
     BATH_HEATER_CLIMATE = 2049
 
 
@@ -72,6 +73,7 @@ class XDevice:
         self.nt = node.get('nt', 0)
         self.pid = node.get('pid')
         self.type = node.get('type') or node.get('pt', 0)
+        self.pt = node.get('pt')
         self.name = node.get('n', '')
         self.cids = node.get('cids')
         self.ch_num = node.get('ch_num')
@@ -117,13 +119,13 @@ class XDevice:
                 dvc = KnobDevice(node)                  
             elif dvc.type in [DeviceType.KNOB]:
                 dvc = KnobDevice(node)
-            elif dvc.type in [DeviceType.MOTION_SENSOR, DeviceType.MOTION_WITH_LIGHT]:
+            elif dvc.type in [DeviceType.MOTION_SENSOR, DeviceType.MOTION_WITH_LIGHT, DeviceType.PRESENCE_SENSOR]:
                 dvc = MotionDevice(node)
             elif dvc.type in [DeviceType.MAGNET_SENSOR]:
                 dvc = ContactDevice(node)
             elif dvc.type in [DeviceType.CURTAIN]:
                 dvc = CoverDevice(node)
-            elif dvc.type in [DeviceType.AIR_CONDITIONER]:
+            elif dvc.type in [DeviceType.VRF, DeviceType.AIR_CONDITIONER]:
                 dvc = ClimateDevice(node)
             elif dvc.type in [DeviceType.BATH_HEATER_CLIMATE]:
                 dvc = BathHeaterDevice(node)
@@ -146,14 +148,25 @@ class XDevice:
 
     async def prop_changed(self, data: dict):
         has_new = False
-        for k in data.keys():
-            if k not in self.prop:
-                has_new = True
-                break
+        if 'params' in data:
+            oldp = self.prop_params
+            for k in (data.get('params') or {}).keys():
+                if k not in oldp:
+                    has_new = True
+                    break
+        else:
+            for k in data.keys():
+                if k not in self.prop:
+                    has_new = True
+                    break
         self.prop.update(data)
         if has_new:
             self.setup_converters()
             await self.setup_entities()
+            for ent in self.entities.values():
+                conv = self.converters.get(ent._name)
+                if conv:
+                    ent.subscribed_attrs = self.subscribe_attrs(conv)
         self.update(self.decode(data))
 
     async def event_fired(self, data: dict):
@@ -191,13 +204,13 @@ class XDevice:
             return
         if not self.converters:
             _LOGGER.warning('Device has none converters: %s', [type(self), self.id])
-        for conv in self.converters.values():
+        for conv in list(self.converters.values()):
             domain = conv.domain
             if domain is None:
                 continue
             if conv.attr in self.entities:
                 continue
-            await asyncio.sleep(1)  # wait for setup
+            await asyncio.sleep(0.05)  # wait for setup
             await gateway.setup_entity(domain, self, conv)
 
     def subscribe_attrs(self, conv: Converter):
@@ -408,17 +421,17 @@ class KnobDevice(SwitchSensorDevice):
 class MotionDevice(XDevice):
     def setup_converters(self):
         super().setup_converters()
+        params = self.prop_params
         self.add_converter(Converter('motion', 'binary_sensor'))
-        self.add_converters(PropBoolConv('motion', 'binary_sensor', prop="mv"))
+        if 'mv' in params:
+            self.add_converter(PropBoolConv('motion', 'binary_sensor', prop='mv'))
         self.add_converter(EventConv('motion.true'))
         self.add_converter(EventConv('motion.false'))
         if self.type in [DeviceType.MOTION_WITH_LIGHT]:
             self.add_converter(PropConv('light', 'sensor', prop='level'))
-        
-        # This is a presence sensor with a built-in light sensor. Its type is still defined as 129,
-        # so we can only temporarily distinguish it by the `cids` value.
-        if 73 in self.cids:
-            # Regular presence sensors use cids = [9], while ceiling-mounted sensors with light detection use cids = [73].
+
+        # Detect luminance via params (works for all sensor types including pt=138)
+        if 'luminance' in params or (self.cids and 73 in self.cids):
             self.add_converter(PropConv(
                     attr='luminance',
                     domain='sensor',
@@ -426,8 +439,6 @@ class MotionDevice(XDevice):
                     unit_of_measurement='lx',
                     device_class='illuminance'
             ))
-
-            # Currently, `approach.true` and `approach.false` seem to behave the same as `mv` (motion).
 
 
 class ContactDevice(XDevice):
@@ -443,11 +454,19 @@ class CoverDevice(XDevice):
         super().setup_converters()
         self.add_converters(
             MotorConv('motor', 'cover'),
-            PropConv('position', parent='motor', prop='tp'),
-            PropConv('current_position', parent='motor', prop='cp'),
+            CoverPositionConv('position', parent='motor', prop='tp'),
+            CoverPositionConv('current_position', parent='motor', prop='cp'),
+            PropBoolConv('route_calibrated', None, prop='rs', parent='motor'),
         )
-        if 'rs' in self.prop_params:
-            self.add_converter(PropBoolConv('reverse', 'switch', prop='rs'))
+        # Tilt support for venetian blinds (pt=22 or tilt-related params present)
+        if (getattr(self, 'pt', None) == 22) or any(k in self.prop_params for k in ('cra', 'tra', 'trs')):
+            self.add_converters(
+                TiltAngleConv('current_angle', parent='motor', prop='cra'),
+                TiltAngleConv('target_angle', None, prop='tra', parent='motor'),
+                PropBoolConv('tilt_route_calibrated', None, prop='trs', parent='motor'),
+            )
+        if 'reverse' in self.prop_params:
+            self.add_converter(PropBoolConv('reverse', 'switch', prop='reverse'))
 
 
 class BathHeaterDevice(XDevice):

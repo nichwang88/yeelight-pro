@@ -203,5 +203,28 @@ class MotorConv(Converter):
 
 
 @dataclass
+class TiltAngleConv(PropConv):
+    min: int = 0
+    max: int = 180
+
+    def decode(self, device: "XDevice", payload: dict, value):
+        payload[self.attr] = max(self.min, min(self.max, int(value)))
+
+    def encode(self, device: "XDevice", payload: dict, value):
+        value = max(self.min, min(self.max, int(value)))
+        super().encode(device, payload, value)
+
+
+@dataclass
+class CoverPositionConv(PropConv):
+    def decode(self, device: "XDevice", payload: dict, value):
+        payload[self.attr] = max(0, min(100, int(value)))
+
+    def encode(self, device: "XDevice", payload: dict, value):
+        value = max(0, min(100, int(value)))
+        super().encode(device, payload, value)
+
+
+@dataclass
 class SceneConv(Converter):
     node: dict = None

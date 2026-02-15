@@ -97,9 +97,10 @@ async def async_setup_entry(hass: HomeAssistant, entry: ConfigEntry):
 async def async_unload_entry(hass: HomeAssistant, entry: ConfigEntry) -> bool:
     unload_ok = await hass.config_entries.async_unload_platforms(entry, SUPPORTED_DOMAINS)
     if unload_ok:
-        gtw = hass.data[DOMAIN][CONF_GATEWAYS].pop(entry.entry_id, None)
-        if gtw:
+        gtw = hass.data[DOMAIN][CONF_GATEWAYS].get(entry.entry_id)
+        if isinstance(gtw, ProGateway):
             await gtw.stop()
+            hass.data[DOMAIN][CONF_GATEWAYS].pop(entry.entry_id)
     return unload_ok
 
 
@@ -192,7 +193,7 @@ class ComponentServices:
         gip = dat.get(CONF_HOST)
         gtw = None
         for g in self.hass.data[DOMAIN][CONF_GATEWAYS].values():
-            if not isinstance(gtw, ProGateway):
+            if not isinstance(g, ProGateway):
                 continue
             if g.host == gip or not gip:
                 gtw = g
@@ -260,14 +261,14 @@ class XEntity(Entity):
         self.device = device
         self.hass = device.hass
         self._name = conv.attr
-        self._option = option or {}
-        self._attr_name = f'{device.name} {conv.attr}'.strip()
+        self._option = (option or getattr(conv, 'option', {}))
+        self._attr_name = self._option.get('name', f'{device.name} {conv.attr}'.strip())
         self._attr_unique_id = f'{device.id}-{conv.attr}'
         self.entity_id = device.entity_id(conv)
         self._attr_icon = self._option.get('icon')
         self._attr_entity_picture = self._option.get('picture')
         self._attr_device_class = self._option.get('class') or conv.device_class
-        self._attr_native_unit_of_measurement = conv.unit_of_measurement
+        self._attr_native_unit_of_measurement = self._option.get('unit') or conv.unit_of_measurement
         self._attr_entity_category = self._option.get('category')
         self._attr_translation_key = self._option.get('translation_key', conv.attr)
 
