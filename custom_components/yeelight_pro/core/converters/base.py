@@ -225,6 +225,32 @@ class CoverPositionConv(PropConv):
         super().encode(device, payload, value)
 
 
+class BathHeaterModeConv(PropConv):
+    def __init__(self):
+        super().__init__('heater_mode', 'select', prop='bhm', parent='heater_power')
+        self.map = {
+            0: '关闭',
+            1: '智能干燥',
+            2: '恒温除雾',
+            3: '快速除雾',
+            4: '极速加热',
+        }
+        self.childs = set()
+        self.option = {'name': '快速模式'}
+
+    def decode(self, device: "XDevice", payload: dict, value: int):
+        payload[self.attr] = self.map.get(value, '关闭')
+
+    def encode(self, device: "XDevice", payload: dict, value: str):
+        rev = {v: k for k, v in self.map.items()}
+        code = rev.get(value, 0)
+        if code == 0:
+            payload['p'] = False
+        else:
+            payload['p'] = True
+            payload['bhm'] = code
+
+
 @dataclass
 class SceneConv(Converter):
     node: dict = None

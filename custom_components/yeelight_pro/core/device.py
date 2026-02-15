@@ -19,6 +19,7 @@ from homeassistant.components.climate import (
 from homeassistant.components.climate.const import (
     HVACMode,
 )
+from homeassistant.const import UnitOfTemperature
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -470,43 +471,62 @@ class CoverDevice(XDevice):
 
 
 class BathHeaterDevice(XDevice):
-    """Bath heater (浴霸) device with climate control, ventilation, and heating.
+    """Bath heater (浴霸) device.
 
     Device props:
       p    - power on/off
       t    - current temperature
       tgt  - target temperature
-      bhm  - bath heater mode (composite mode indicator)
-      ve   - ventilation (换气) on/off
-      fa   - fan/blow (吹风) on/off
-      he   - heating (暖风) on/off
-      do   - drying (干燥) on/off
+      bhm  - bath heater mode (0=关闭, 1=智能干燥, 2=恒温除雾, 3=快速除雾, 4=极速加热)
+      ve   - ventilation (换气) speed 0-3
+      fa   - fan/blow (凉风) speed 0-3
+      he   - heating (暖风) speed 0-3
 
-    App functions: 换气, 吹风, 暖风, 洗浴
-    Sub-modes per function shown in app (controlled via bhm):
-      换气: 换气高档/换气低档
-      吹风: 吹风高档/吹风低档
-      暖风: 暖风高档/暖风低档
-      洗浴: 极速加热/恒温除雾/快速除雾/智能干燥
+    Entities:
+      1. heater_power (switch) - 浴霸总电源
+      2. ventilation (fan) - 换气, 风速调节
+      3. blow (fan) - 凉风, 风速调节
+      4. warm (fan) - 暖风, 风速调节
+      5. heater_mode (select) - 快速模式预设
+      6. current_temp (sensor) - 环境温度
+      7. target_temp (number) - 目标环境温度
     """
-    # Mark this device so climate.py can create the correct entity class
-    is_bath_heater = True
 
     def setup_converters(self):
         super().setup_converters()
-        # Climate entity for temperature control (only HEAT mode, no cool/dry)
-        self.add_converter(Converter('climate', 'climate'))
-        self.add_converter(PropBoolConv('is_on', parent='climate', prop='p'))
-        self.add_converter(PropConv('current_temperature', parent='climate', prop='t'))
-        self.add_converter(PropConv('target_temperature', parent='climate', prop='tgt'))
-        # Bath heater mode as sensor (also tracked by climate entity via extra_state_attributes)
-        self.add_converter(PropConv('bath_heater_mode', 'sensor', prop='bhm'))
+        # 1. 浴霸总电源
+        self.add_converter(PropBoolConv('heater_power', 'switch', prop='p'))
+        self.converters['heater_power'].option = {
+            'name': f'{self.name} 浴霸电源',
+        }
 
-        # Individual function switches
-        self.add_converter(PropBoolConv('ventilation', 'switch', prop='ve'))    # 换气
-        self.add_converter(PropBoolConv('fan', 'switch', prop='fa'))            # 吹风
-        self.add_converter(PropBoolConv('heating', 'switch', prop='he'))        # 暖风/加热
-        self.add_converter(PropBoolConv('drying', 'switch', prop='do'))         # 干燥/洗浴
+        # 2-4. 换气/凉风/暖风 - fan 实体，带风速调节
+        self.add_converter(PropConv('ventilation', 'fan', prop='ve'))
+        self.add_converter(PropConv('blow', 'fan', prop='fa'))
+        self.add_converter(PropConv('warm', 'fan', prop='he'))
+        self.converters['ventilation'].option = {'name': f'{self.name} 换气'}
+        self.converters['blow'].option = {'name': f'{self.name} 凉风'}
+        self.converters['warm'].option = {'name': f'{self.name} 暖风'}
+
+        # 5. 快速模式 - select 实体
+        self.add_converter(BathHeaterModeConv())
+
+        # 6. 环境温度 - sensor 实体
+        self.add_converter(PropConv('current_temp', 'sensor', prop='t', parent='heater_power'))
+        self.converters['current_temp'].option = {
+            'name': f'{self.name} 环境温度',
+            'class': 'temperature',
+            'unit': UnitOfTemperature.CELSIUS,
+        }
+
+        # 7. 目标环境温度 - number 实体
+        self.add_converter(PropConv('target_temp', 'number', prop='tgt', parent='heater_power'))
+        self.converters['target_temp'].min = 1.0
+        self.converters['target_temp'].max = 50.0
+        self.converters['target_temp'].step = 1.0
+        self.converters['target_temp'].option = {
+            'name': f'{self.name} 目标环境温度',
+        }
 
 
 class WifiPanelDevice(RelayDoubleDevice):
