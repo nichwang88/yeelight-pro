@@ -182,6 +182,15 @@ class ProGateway:
                 self.device = WifiPanelDevice(node)
                 await self.add_device(self.device)
             if not (dvc := self.devices.get(nid)):
+                # Auto-register device from prop/event messages if it has enough info
+                if node.get('n') and node.get('nt') in [2, 4]:  # MESH or MRSH_GROUP
+                    self.log.info('Auto-registering device from prop: %s', node)
+                    dvc = await XDevice.from_node(self, node)
+                    if dvc and hasattr(dvc, 'prop'):
+                        # Trigger prop_changed to process initial params
+                        if 'params' in node:
+                            await dvc.prop_changed(node)
+                        continue
                 self.log.warning('Device not found: %s', node)
                 continue
             if cmd in ['gateway_post.prop', 'device_post.prop']:

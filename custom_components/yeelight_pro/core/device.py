@@ -51,6 +51,7 @@ class DeviceType(IntEnum):
     MOTION_WITH_LIGHT = 134
     ILLUMINATION_SENSOR = 135
     TEMPERATURE_HUMIDITY = 136
+    BATH_HEATER_CLIMATE = 2049
 
 
 DEVICE_TYPE_LIGHTS = [
@@ -70,7 +71,7 @@ class XDevice:
         self.id = int(node['id'])
         self.nt = node.get('nt', 0)
         self.pid = node.get('pid')
-        self.type = node.get('type', 0)
+        self.type = node.get('type') or node.get('pt', 0)
         self.name = node.get('n', '')
         self.cids = node.get('cids')
         self.ch_num = node.get('ch_num')
@@ -124,6 +125,8 @@ class XDevice:
                 dvc = CoverDevice(node)
             elif dvc.type in [DeviceType.AIR_CONDITIONER]:
                 dvc = ClimateDevice(node)
+            elif dvc.type in [DeviceType.BATH_HEATER_CLIMATE]:
+                dvc = BathHeaterDevice(node)
             else:
                 _LOGGER.warning('Unsupported device: %s', node)
                 return None
@@ -445,6 +448,24 @@ class CoverDevice(XDevice):
         )
         if 'rs' in self.prop_params:
             self.add_converter(PropBoolConv('reverse', 'switch', prop='rs'))
+
+
+class BathHeaterDevice(XDevice):
+    """Bath heater (浴霸) device with climate control, ventilation, and heating."""
+    def setup_converters(self):
+        super().setup_converters()
+        # Climate entity for temperature control
+        self.add_converter(Converter('climate', 'climate'))
+        self.add_converter(PropBoolConv('is_on', parent='climate', prop='p'))
+        self.add_converter(PropConv('current_temperature', parent='climate', prop='t'))
+        self.add_converter(PropConv('target_temperature', parent='climate', prop='tgt'))
+
+        # Individual function switches
+        self.add_converter(PropBoolConv('ventilation', 'switch', prop='ve'))    # 换气
+        self.add_converter(PropBoolConv('fan', 'switch', prop='fa'))            # 吹风
+        self.add_converter(PropBoolConv('heating', 'switch', prop='he'))        # 暖风/加热
+        self.add_converter(PropBoolConv('drying', 'switch', prop='do'))         # 干燥
+        self.add_converter(PropConv('bath_heater_mode', 'sensor', prop='bhm'))  # 浴霸模式
 
 
 class WifiPanelDevice(RelayDoubleDevice):
