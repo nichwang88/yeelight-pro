@@ -74,6 +74,17 @@ class XLightEntity(XEntity, LightEntity):
         if device.converters.get(ATTR_TRANSITION):
             self._attr_supported_features |= LightEntityFeature.TRANSITION
 
+        # Set initial color_mode based on supported modes
+        # HA requires color_mode to always be set to a valid value from supported_color_modes
+        if ColorMode.RGB in self._attr_supported_color_modes:
+            self._attr_color_mode = ColorMode.RGB
+        elif ColorMode.COLOR_TEMP in self._attr_supported_color_modes:
+            self._attr_color_mode = ColorMode.COLOR_TEMP
+        elif ColorMode.BRIGHTNESS in self._attr_supported_color_modes:
+            self._attr_color_mode = ColorMode.BRIGHTNESS
+        else:
+            self._attr_color_mode = ColorMode.ONOFF
+
         self._target_attrs = {}
 
     @callback
@@ -114,6 +125,14 @@ class XLightEntity(XEntity, LightEntity):
         if ATTR_RGB_COLOR in data:
             self._attr_rgb_color = data[ATTR_RGB_COLOR]
 
+        # Update color_mode based on received data to stay in sync with device
+        if ATTR_RGB_COLOR in data:
+            self._attr_color_mode = ColorMode.RGB
+        elif ATTR_COLOR_TEMP in data:
+            self._attr_color_mode = ColorMode.COLOR_TEMP
+        elif ATTR_BRIGHTNESS in data and ColorMode.BRIGHTNESS in self._attr_supported_color_modes:
+            self._attr_color_mode = ColorMode.BRIGHTNESS
+
     async def async_turn_on(self, **kwargs):
         """Turn the entity on."""
         kwargs[self._name] = True
@@ -125,8 +144,9 @@ class XLightEntity(XEntity, LightEntity):
             self._attr_color_mode = ColorMode.RGB
         elif ATTR_COLOR_TEMP in kwargs:
             self._attr_color_mode = ColorMode.COLOR_TEMP
-        else:
-            self._attr_color_mode = None
+        elif ATTR_BRIGHTNESS in kwargs:
+            self._attr_color_mode = ColorMode.BRIGHTNESS
+        # else: keep current color_mode unchanged
         return await self.async_turn(kwargs[self._name], **kwargs)
 
     async def async_turn_off(self, **kwargs):
