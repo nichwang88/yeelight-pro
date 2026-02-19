@@ -101,16 +101,18 @@ class XLightEntity(XEntity, LightEntity):
 
         if diff < delay:
             check_attrs = [self._name, ATTR_BRIGHTNESS, ATTR_COLOR_TEMP, ATTR_COLOR_TEMP_KELVIN]
+            pending = []
             for k in check_attrs:
                 if k not in data:
                     continue
-                elif k not in self._target_attrs:
-                    check_attrs.remove(k)
-                elif self._target_attrs[k] == data[k]:
+                if k not in self._target_attrs:
+                    continue
+                if self._target_attrs[k] == data[k]:
                     self._target_attrs.pop(k, None)
-                    check_attrs.remove(k)
-            if check_attrs:
-                # ignore new state
+                    continue
+                pending.append(k)
+            if pending:
+                # ignore new state - target values haven't arrived yet
                 self.target_task = self.hass.loop.create_task(set_state())
                 _LOGGER.info('%s: Ignore new state: %s', self.name, [data, self._target_attrs, diff, delay])
                 return
@@ -159,6 +161,12 @@ class XLightEntity(XEntity, LightEntity):
         ret = await self.device_send_props(kwargs)
         if ret:
             self._attr_is_on = on
+            if ATTR_BRIGHTNESS in kwargs:
+                self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
+            if ATTR_COLOR_TEMP in kwargs:
+                self._attr_color_temp = kwargs[ATTR_COLOR_TEMP]
+            if ATTR_RGB_COLOR in kwargs:
+                self._attr_rgb_color = kwargs[ATTR_RGB_COLOR]
             self.async_write_ha_state()
         return ret
 
