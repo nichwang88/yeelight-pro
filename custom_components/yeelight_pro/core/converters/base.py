@@ -98,17 +98,15 @@ class BrightnessConv(PropConv):
 
 @dataclass
 class ColorTempKelvin(PropConv):
-    # 1600..6500 => 370..153
     mink: int = 1600
     maxk: int = 6500
 
     def decode(self, device: "XDevice", payload: dict, value: int):
-        """Convert degrees kelvin to mired shift."""
-        payload[self.attr] = int(1000000.0 / value)
-        payload["color_temp_kelvin"] = value
+        """Decode device kelvin value to HA color_temp_kelvin."""
+        payload[self.attr] = value
 
     def encode(self, device: "XDevice", payload: dict, value: int):
-        value = int(1000000.0 / value)
+        """Encode HA kelvin value to device kelvin value."""
         if value < self.mink:
             value = self.mink
         if value > self.maxk:

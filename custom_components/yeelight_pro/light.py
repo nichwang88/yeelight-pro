@@ -10,7 +10,6 @@ from homeassistant.components.light import (
     ColorMode,
     LightEntityFeature,
     ATTR_BRIGHTNESS,
-    ATTR_COLOR_TEMP,
     ATTR_COLOR_TEMP_KELVIN,
     ATTR_RGB_COLOR,
     ATTR_TRANSITION,
@@ -54,14 +53,9 @@ class XLightEntity(XEntity, LightEntity):
         self._attr_supported_color_modes = set()
         if device.converters.get(ATTR_RGB_COLOR):
             self._attr_supported_color_modes.add(ColorMode.RGB)
-        if cov := device.converters.get(ATTR_COLOR_TEMP):
+        if cov := device.converters.get(ATTR_COLOR_TEMP_KELVIN):
             self._attr_supported_color_modes.add(ColorMode.COLOR_TEMP)
-            if hasattr(cov, 'minm') and hasattr(cov, 'maxm'):
-                self._attr_min_mireds = cov.minm
-                self._attr_max_mireds = cov.maxm
-            elif hasattr(cov, 'mink') and hasattr(cov, 'maxk'):
-                self._attr_min_mireds = int(1000000 / cov.maxk)
-                self._attr_max_mireds = int(1000000 / cov.mink)
+            if hasattr(cov, 'mink') and hasattr(cov, 'maxk'):
                 self._attr_min_color_temp_kelvin = cov.mink
                 self._attr_max_color_temp_kelvin = cov.maxk
 
@@ -100,7 +94,7 @@ class XLightEntity(XEntity, LightEntity):
             self.async_write_ha_state()
 
         if diff < delay:
-            check_attrs = [self._name, ATTR_BRIGHTNESS, ATTR_COLOR_TEMP, ATTR_COLOR_TEMP_KELVIN]
+            check_attrs = [self._name, ATTR_BRIGHTNESS, ATTR_COLOR_TEMP_KELVIN]
             pending = []
             for k in check_attrs:
                 if k not in data:
@@ -122,33 +116,51 @@ class XLightEntity(XEntity, LightEntity):
             self._attr_is_on = data[self._name]
         if ATTR_BRIGHTNESS in data:
             self._attr_brightness = data[ATTR_BRIGHTNESS]
-        if ATTR_COLOR_TEMP in data:
-            self._attr_color_temp = data[ATTR_COLOR_TEMP]
+        if ATTR_COLOR_TEMP_KELVIN in data:
+            self._attr_color_temp_kelvin = data[ATTR_COLOR_TEMP_KELVIN]
         if ATTR_RGB_COLOR in data:
             self._attr_rgb_color = data[ATTR_RGB_COLOR]
 
         # Update color_mode based on received data to stay in sync with device
         if ATTR_RGB_COLOR in data:
             self._attr_color_mode = ColorMode.RGB
-        elif ATTR_COLOR_TEMP in data:
+        elif ATTR_COLOR_TEMP_KELVIN in data:
             self._attr_color_mode = ColorMode.COLOR_TEMP
         elif ATTR_BRIGHTNESS in data and ColorMode.BRIGHTNESS in self._attr_supported_color_modes:
             self._attr_color_mode = ColorMode.BRIGHTNESS
 
     async def async_turn_on(self, **kwargs):
         """Turn the entity on."""
+        has_attr = ATTR_BRIGHTNESS in kwargs or ATTR_COLOR_TEMP_KELVIN in kwargs or ATTR_RGB_COLOR in kwargs
+        if ATTR_RGB_COLOR in kwargs:
+            self._attr_color_mode = ColorMode.RGB
+        elif ATTR_COLOR_TEMP_KELVIN in kwargs:
+            self._attr_color_mode = ColorMode.COLOR_TEMP
+        elif ATTR_BRIGHTNESS in kwargs:
+            self._attr_color_mode = ColorMode.BRIGHTNESS
+        # If light is already on and we're only changing attributes (brightness/color),
+        # send attributes without the power-on command. Some devices (e.g. Matter bridge
+        # devices) ignore attribute changes when combined with power state in one command.
+        if self._attr_is_on and has_attr:
+            self._target_attrs = {
+                **kwargs,
+                'time': time.time(),
+            }
+            ret = await self.device_send_props(kwargs)
+            if ret:
+                if ATTR_BRIGHTNESS in kwargs:
+                    self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
+                if ATTR_COLOR_TEMP_KELVIN in kwargs:
+                    self._attr_color_temp_kelvin = kwargs[ATTR_COLOR_TEMP_KELVIN]
+                if ATTR_RGB_COLOR in kwargs:
+                    self._attr_rgb_color = kwargs[ATTR_RGB_COLOR]
+                self.async_write_ha_state()
+            return ret
         kwargs[self._name] = True
         self._target_attrs = {
             **kwargs,
             'time': time.time(),
         }
-        if ATTR_RGB_COLOR in kwargs:
-            self._attr_color_mode = ColorMode.RGB
-        elif ATTR_COLOR_TEMP in kwargs:
-            self._attr_color_mode = ColorMode.COLOR_TEMP
-        elif ATTR_BRIGHTNESS in kwargs:
-            self._attr_color_mode = ColorMode.BRIGHTNESS
-        # else: keep current color_mode unchanged
         return await self.async_turn(kwargs[self._name], **kwargs)
 
     async def async_turn_off(self, **kwargs):
@@ -163,8 +175,8 @@ class XLightEntity(XEntity, LightEntity):
             self._attr_is_on = on
             if ATTR_BRIGHTNESS in kwargs:
                 self._attr_brightness = kwargs[ATTR_BRIGHTNESS]
-            if ATTR_COLOR_TEMP in kwargs:
-                self._attr_color_temp = kwargs[ATTR_COLOR_TEMP]
+            if ATTR_COLOR_TEMP_KELVIN in kwargs:
+                self._attr_color_temp_kelvin = kwargs[ATTR_COLOR_TEMP_KELVIN]
             if ATTR_RGB_COLOR in kwargs:
                 self._attr_rgb_color = kwargs[ATTR_RGB_COLOR]
             self.async_write_ha_state()
