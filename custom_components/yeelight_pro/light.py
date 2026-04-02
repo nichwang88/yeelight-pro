@@ -136,7 +136,7 @@ class XLightEntity(XEntity, LightEntity):
             self._attr_color_mode = ColorMode.RGB
         elif ATTR_COLOR_TEMP_KELVIN in kwargs:
             self._attr_color_mode = ColorMode.COLOR_TEMP
-        elif ATTR_BRIGHTNESS in kwargs:
+        elif ATTR_BRIGHTNESS in kwargs and ColorMode.BRIGHTNESS in self._attr_supported_color_modes:
             self._attr_color_mode = ColorMode.BRIGHTNESS
         # If light is already on and we're only changing attributes (brightness/color),
         # send attributes without the power-on command. Some devices (e.g. Matter bridge
