@@ -82,6 +82,7 @@ class XDevice:
         self.entities: Dict[str, "XEntity"] = {}
         self.gateways: List["ProGateway"] = []
         self.converters = {}
+        self._setup_lock = asyncio.Lock()
         self.setup_converters()
 
     def setup_converters(self):
@@ -203,16 +204,17 @@ class XDevice:
     async def setup_entities(self):
         if not (gateway := self.gateway):
             return
-        if not self.converters:
-            _LOGGER.warning('Device has none converters: %s', [type(self), self.id])
-        for conv in list(self.converters.values()):
-            domain = conv.domain
-            if domain is None:
-                continue
-            if conv.attr in self.entities:
-                continue
-            await asyncio.sleep(0.05)  # wait for setup
-            await gateway.setup_entity(domain, self, conv)
+        async with self._setup_lock:
+            if not self.converters:
+                _LOGGER.warning('Device has none converters: %s', [type(self), self.id])
+            for conv in list(self.converters.values()):
+                domain = conv.domain
+                if domain is None:
+                    continue
+                if conv.attr in self.entities:
+                    continue
+                await asyncio.sleep(0.05)  # wait for setup
+                await gateway.setup_entity(domain, self, conv)
 
     def subscribe_attrs(self, conv: Converter):
         attrs = {conv.attr}
@@ -308,7 +310,11 @@ class GatewayDevice(XDevice):
     async def add_scene(self, node: dict):
         if not (nid := node.get('id')):
             return
-        self.add_converter(SceneConv(f'scene_{nid}', 'button', node=node))
+        attr = f'scene_{nid}'
+        if attr in self.converters:
+            self.converters[attr].node = node
+        else:
+            self.add_converter(SceneConv(attr, 'button', node=node))
         await self.setup_entities()
 
     def entity_id(self, conv: Converter):

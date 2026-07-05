@@ -278,7 +278,7 @@ class XEntity(Entity):
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device.id)},
             name=device.name,
-            model=device.pid or device.type or '',
+            model=str(device.pid or device.type or ''),
             via_device=via_device,
             sw_version=device.firmware_version,
             manufacturer=DEFAULT_NAME,
