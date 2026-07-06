@@ -172,6 +172,10 @@ class XLightEntity(XEntity, LightEntity):
         kwargs[self._name] = on
         ret = await self.device_send_props(kwargs)
         if ret:
+            if on is False:
+                refreshed = await self.device.refresh_node()
+                if refreshed:
+                    return ret
             self._attr_is_on = on
             if ATTR_BRIGHTNESS in kwargs:
                 self._attr_brightness = kwargs[ATTR_BRIGHTNESS]

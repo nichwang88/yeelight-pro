@@ -37,6 +37,44 @@ def test_light():
     assert data['color_temp'] == int(1000000.0 / 4000)
 
 
+def test_refresh_node_updates_light_from_gateway_readback():
+    class Entity:
+        subscribed_attrs = {'light'}
+        added = False
+
+        def __init__(self):
+            self.states = []
+
+        def async_set_state(self, data):
+            self.states.append(data)
+
+    class Gateway:
+        async def send(self, method, **kwargs):
+            assert method == 'gateway_get.node'
+            assert kwargs == {'params': {'id': 1270}}
+            return {
+                'id': 1,
+                'nodes': [
+                    {
+                        'id': 1270,
+                        'nt': 2,
+                        'params': {'p': False, 'l': 20, 'ct': 4000},
+                    }
+                ],
+            }
+
+    node = {"nt": 2, "id": 1270, "n": "客厅灯", "type": 3}
+    device = LightDevice(node)
+    device.gateways.append(Gateway())
+    entity = Entity()
+    device.entities['light'] = entity
+
+    result = asyncio.run(device.refresh_node())
+
+    assert result['params']['p'] is False
+    assert entity.states[-1]['light'] is False
+
+
 def test_relay():
     node = {"id": 1273, "nt": 2, "n": "双路继电器", "type": 7}
     device = asyncio.run(XDevice.from_node(gateway, node))

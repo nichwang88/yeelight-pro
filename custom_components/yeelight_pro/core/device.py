@@ -284,6 +284,16 @@ class XDevice:
             return None
         return await self.gateway.send('gateway_get.node', params={'id': self.id})
 
+    async def refresh_node(self):
+        """Read current node props from the gateway and update HA entities."""
+        res = await self.get_node()
+        for node in (res or {}).get('nodes') or []:
+            if int(node.get('id', -1)) != self.id:
+                continue
+            await self.prop_changed(node)
+            return node
+        return None
+
     async def set_prop(self, **kwargs):
         if not self.gateway:
             return None
