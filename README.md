@@ -31,6 +31,14 @@ Yeelight Pro 智能家居设备的 Home Assistant 集成。支持通过 Yeelight
 
 ## 更新日志
 
+### v0.5.4 — 网关初始化与状态恢复（待发布）
+- 启动连接或拓扑等待超时后继续重试，重连时重新获取拓扑。
+- 属性先于拓扑到达时先建立父网关；补建此前创建失败的设备实体。
+- 初始化后读取人体传感器当前值，避免只依赖旧状态或下一次动作事件。
+- 清理 EOF 连接及失败请求，忽略已取消请求的迟到回复。
+- 不再把恢复记录中的 `unavailable` / `unknown` 当作无人。
+- 回归验证使用内存连接，可在安装 Home Assistant 依赖的 Python 环境运行 `python3 -m unittest tests.test_recovery -v`，不访问真实设备。
+
 ### v0.4.0 — 浴霸多实体重构
 - **浴霸设备重构**：从 Climate 实体改为多实体方案（Fan + Select + Sensor + Number + Switch），提供更直观的控制体验
 - 新增 `fan` 平台 — 支持换气、凉风、暖风的 4 档风速控制

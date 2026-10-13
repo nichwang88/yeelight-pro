@@ -5,7 +5,7 @@ import json
 from typing import Callable, Dict, Union, Optional
 
 from .const import *
-from .device import XDevice, GatewayDevice, WifiPanelDevice
+from .device import XDevice, GatewayDevice, WifiPanelDevice, MotionDevice
 from .converters.base import Converter
 
 _LOGGER = logging.getLogger(__name__)
@@ -32,6 +32,11 @@ class ProGateway:
         self.setups: Dict[str, Callable] = {}
         self.log = options.get('logger', _LOGGER)
         self._msgs: Dict[Union[int, str], asyncio.Future] = {}
+        self._connect_lock = asyncio.Lock()
+        self._topology_lock = asyncio.Lock()
+        self._topology_ready = asyncio.Event()
+        self._initialization_task = None
+        self._node_requests = {}
 
         self.log.debug('Gateway: %s, pid: %s', host, self.pid)
 
@@ -50,6 +55,10 @@ class ProGateway:
             self.log.warning('Setup %s not ready for %s', domain, [device, conv])
 
     async def add_device(self, device: "XDevice"):
+        # Properties can arrive before the first topology response.
+        if self.pid != PID_WIFI_PANEL and self.device is None:
+            self.device = GatewayDevice(self)
+            await self.add_device(self.device)
         if not device.hass:
             device.hass = self.hass
         if device.id not in self.devices:
@@ -74,27 +83,72 @@ class ProGateway:
             if not (fut := self._msgs.get('ready')):
                 return None
             try:
-                await asyncio.wait_for(fut, self.timeout)
+                await asyncio.wait_for(asyncio.shield(fut), self.timeout)
             except asyncio.TimeoutError:
                 return None
 
-        await self.topology(wait_result=True)
+        try:
+            await asyncio.wait_for(self._topology_ready.wait(), self.timeout)
+        except asyncio.TimeoutError:
+            self.log.warning('Gateway %s topology not ready; retrying in background', self.host)
+            return False
+        return True
+
+    async def initialize(self):
+        """Retry missing topology and read current sensor states after connecting."""
+        while not self._topology_ready.is_set():
+            try:
+                await self.topology(wait_result=True)
+                await asyncio.wait_for(self._topology_ready.wait(), self.timeout)
+            except (asyncio.TimeoutError, ConnectionError):
+                pass
+            except Exception:
+                self.log.exception('Gateway %s topology initialization failed', self.host)
+            if not self._topology_ready.is_set():
+                self.log.warning('Gateway %s topology missing; retrying', self.host)
+                await asyncio.sleep(self.timeout)
+        pending = [device for device in self.devices.values() if isinstance(device, MotionDevice)]
+        for attempt in range(3):
+            retry = []
+            for device in pending:
+                try:
+                    if not await device.refresh_node():
+                        retry.append(device)
+                except Exception:
+                    self.log.exception('Gateway %s sensor %s readback failed', self.host, device.id)
+                    retry.append(device)
+            if not retry:
+                break
+            pending = retry
+            if attempt < 2:
+                await asyncio.sleep(self.timeout)
+        else:
+            self.log.warning('Gateway %s sensors awaiting updates: %s', self.host, [device.id for device in pending])
 
     async def stop(self, *args):
         if self.main_task and not self.main_task.cancelled():
             self.main_task.cancel()
-
-        if self.writer:
-            try:
-                self.writer.close()
-                await self.writer.wait_closed()
-            except Exception:
-                pass
-            self.writer = None
+            await asyncio.gather(self.main_task, return_exceptions=True)
+        await self.disconnect()
 
         for device in self.devices.values():
             if self in device.gateways:
                 device.gateways.remove(self)
+
+    async def disconnect(self):
+        self._topology_ready.clear()
+        if self._initialization_task:
+            self._initialization_task.cancel()
+            await asyncio.gather(self._initialization_task, return_exceptions=True)
+            self._initialization_task = None
+        writer, self.writer = self.writer, None
+        self.reader = None
+        if writer:
+            try:
+                writer.close()
+                await writer.wait_closed()
+            except Exception:
+                pass
 
     async def run_forever(self):
         """Main thread loop."""
@@ -119,14 +173,19 @@ class ProGateway:
         return res
 
     async def _connect(self):
-        if not self.writer:
-            self.log.debug('Connect gateway: %s', self.host)
-            self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
+        async with self._connect_lock:
             if not self.writer:
-                return False
-            if fut := self._msgs.get('ready'):
-                fut.set_result(True)
-                del self._msgs['ready']
+                self.log.debug('Connect gateway: %s', self.host)
+                self.reader, self.writer = await asyncio.open_connection(self.host, self.port)
+                if not self.writer:
+                    return False
+                if fut := self._msgs.pop('ready', None):
+                    if not fut.done():
+                        fut.set_result(True)
+                self._topology_ready.clear()
+                # Config-flow availability checks do not have a reader task.
+                if self.main_task and not self.main_task.done():
+                    self._initialization_task = asyncio.create_task(self.initialize())
         return True
 
     async def check_available(self):
@@ -144,16 +203,9 @@ class ProGateway:
                 buf = await self.reader.readline()
             except (ConnectionError, BrokenPipeError, Exception) as exc:
                 buf = None
-                if isinstance(exc, (ConnectionError, BrokenPipeError)):
-                    try:
-                        self.writer.close()
-                        await self.writer.wait_closed()
-                    except (BrokenPipeError, Exception) as ce:
-                        self.log.error('Connection close error: %s', [type(ce), ce])
-                    self.writer = None
                 self.log.error('Readline error: %s', [type(exc), exc])
-                await asyncio.sleep(self.timeout - 0.1)
             if not buf:
+                await self.disconnect()
                 break
             msg += buf
             if buf[-2:] == MSG_SPLIT:
@@ -167,7 +219,8 @@ class ProGateway:
         cid = cmd if cmd == 'gateway_post.topology' else dat.get('id')
         nodes = dat.get('nodes') or []
         if ack := self._msgs.get(cid):
-            ack.set_result(dat)
+            if not ack.done():
+                ack.set_result(dat)
         else:
             self.log.info('Gateway message: %s', [cid, dat])
 
@@ -192,6 +245,13 @@ class ProGateway:
             if node.get('nt') == 6 and self.device:
                 dvc = self.device
             elif not (dvc := self.devices.get(nid)):
+                if cmd in ['gateway_post.event', 'device_post.event'] and not node.get('type', node.get('pt')):
+                    now = asyncio.get_running_loop().time()
+                    if now - self._node_requests.get(nid, float('-inf')) >= self.timeout:
+                        self._node_requests[nid] = now
+                        # Do not wait for a response from inside the reader loop.
+                        await self.get_node(nid, wait_result=False)
+                    return
                 await XDevice.from_node(self, node)
                 dvc = self.devices.get(nid)
                 if not dvc:
@@ -199,17 +259,21 @@ class ProGateway:
                         return
                     self.log.warning('Device not found: %s', node)
                     return
-            if cmd in ['gateway_post.prop', 'device_post.prop']:
+            if cmd in ['gateway_post.prop', 'device_post.prop'] or (cmd is None and 'params' in node):
+                self._node_requests.pop(nid, None)
                 await dvc.prop_changed(node)
             if cmd in ['gateway_post.event', 'device_post.event']:
                 await dvc.event_fired(node)
 
         if nodes:
             await asyncio.gather(*(process_node(node) for node in nodes))
+        if is_topology:
+            self._topology_ready.set()
 
     async def send(self, method, wait_result=True, **kwargs):
         if not self.writer:
-            await self.connect()
+            if not await self.connect():
+                raise ConnectionError(f'Gateway {self.host} is not connected')
         if method == 'gateway_get.topology':
             cid = 'gateway_post.topology'
         else:
@@ -225,23 +289,24 @@ class ProGateway:
             **kwargs,
         }
         self.log.info('Send command: %s', dat)
-        self.writer.write(json.dumps(dat).encode() + MSG_SPLIT)
-        await self.writer.drain()
-
-        if not fut:
-            return None
         try:
+            self.writer.write(json.dumps(dat).encode() + MSG_SPLIT)
+            await self.writer.drain()
+            if not fut:
+                return None
             await asyncio.wait_for(fut, self.timeout)
         except asyncio.TimeoutError:
             return None
         finally:
-            del self._msgs[cid]
+            if fut is not None and self._msgs.get(cid) is fut:
+                del self._msgs[cid]
         res = fut.result()
         return res
 
     async def topology(self, wait_result=False):
         cmd = 'device_get.topology' if self.pid == PID_WIFI_PANEL else 'gateway_get.topology'
-        await self.send(cmd, wait_result=wait_result)
+        async with self._topology_lock:
+            return await self.send(cmd, wait_result=wait_result)
 
     async def get_node(self, nid=0, wait_result=True):
         cmd = 'device_get.node' if self.pid == PID_WIFI_PANEL else 'gateway_get.node'

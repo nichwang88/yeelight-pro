@@ -2,7 +2,7 @@
 import logging
 
 from homeassistant.core import callback
-from homeassistant.const import STATE_ON
+from homeassistant.const import STATE_ON, STATE_OFF
 from homeassistant.components.binary_sensor import (
     BinarySensorEntity,
     BinarySensorDeviceClass,
@@ -50,7 +50,7 @@ class XBinarySensorEntity(XEntity, BinarySensorEntity, RestoreEntity):
 
     @callback
     def async_restore_last_state(self, state: str, attrs: dict):
-        self._attr_is_on = state == STATE_ON
+        self._attr_is_on = state == STATE_ON if state in (STATE_ON, STATE_OFF) else None
         for k, v in attrs.items():
             if k in self.subscribed_attrs:
                 self._attr_extra_state_attributes[k] = v

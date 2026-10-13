@@ -104,6 +104,7 @@ class XDevice:
         if dvc := gateway.devices.get(nid):
             if n := node.get('n'):
                 dvc.name = n
+            await dvc.setup_entities()
         else:
             dvc = XDevice(node)
             if dvc.nt in [NodeType.SCENE]:
@@ -164,7 +165,9 @@ class XDevice:
         self.prop.update(data)
         if has_new:
             self.setup_converters()
-            await self.setup_entities()
+        # Failed setup must be retried even when the same properties repeat.
+        await self.setup_entities()
+        if has_new:
             for ent in self.entities.values():
                 conv = self.converters.get(ent._name)
                 if conv:
@@ -172,6 +175,7 @@ class XDevice:
         self.update(self.decode(data))
 
     async def event_fired(self, data: dict):
+        await self.setup_entities()
         decoded = self.decode_event(data)
         self.update(decoded)
         _LOGGER.debug('Event fired: %s', [data, decoded])
