@@ -60,3 +60,20 @@ def test_gateway_does_not_link_to_itself(monkeypatch):
     assert info.get("via_device_id") is None
     assert "via_device" not in info
     registry.async_get_device.assert_not_called()
+
+
+def test_gateway_lookup_is_scoped_to_its_config_entry(monkeypatch):
+    child = device()
+    registry = SimpleNamespace(
+        async_get_device_by_identifier=Mock(return_value=SimpleNamespace(id="correct-entry-parent")),
+        async_get_device=Mock(return_value=SimpleNamespace(id="other-entry-parent")),
+        async_get_or_create=Mock(),
+    )
+    monkeypatch.setattr(dr, "async_get", lambda hass: registry)
+    entity = XEntity(child, Converter("motion", "binary_sensor"))
+    assert entity.device_info.as_dict().get("via_device_id") == "correct-entry-parent"
+    registry.async_get_device_by_identifier.assert_called_once_with(
+        ("yeelight_pro", "test.invalid"), "entry"
+    )
+    registry.async_get_device.assert_not_called()
+    registry.async_get_or_create.assert_not_called()

@@ -261,7 +261,11 @@ def _gateway_registry_id(device: XDevice):
     parent = gateway.device
     registry = dr.async_get(device.hass)
     identifiers = {(DOMAIN, parent.id)}
-    registered = registry.async_get_device(identifiers=identifiers)
+    lookup = getattr(registry, 'async_get_device_by_identifier', None)
+    if lookup is not None:
+        registered = lookup((DOMAIN, parent.id), gateway.entry_id) if gateway.entry_id else None
+    else:
+        registered = registry.async_get_device(identifiers=identifiers)
     if (
         registered is None and gateway.entry_id
         and device.hass.config_entries.async_get_entry(gateway.entry_id) is not None
