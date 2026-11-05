@@ -253,6 +253,29 @@ class ComponentServices:
         _LOGGER.info('Mock message: %s', message)
         await gtw.on_message(message.encode('utf-8'))
         
+def _gateway_registry_id(device: XDevice):
+    """Resolve/create the parent before registering an entity which uses it."""
+    if device.hass is None or device.gateway is None or device.gateway.device is None:
+        return None
+    gateway = device.gateway
+    parent = gateway.device
+    registry = dr.async_get(device.hass)
+    identifiers = {(DOMAIN, parent.id)}
+    registered = registry.async_get_device(identifiers=identifiers)
+    if (
+        registered is None and gateway.entry_id
+        and device.hass.config_entries.async_get_entry(gateway.entry_id) is not None
+    ):
+        registered = registry.async_get_or_create(
+            config_entry_id=gateway.entry_id,
+            identifiers=identifiers,
+            name=parent.name,
+            model=str(parent.pid or parent.type or ''),
+            manufacturer=DEFAULT_NAME,
+        )
+    return registered.id if registered else None
+
+
 class XEntity(Entity):
     added = False
     _attr_should_poll = False
@@ -272,14 +295,18 @@ class XEntity(Entity):
         self._attr_entity_category = self._option.get('category')
         self._attr_translation_key = self._option.get('translation_key', conv.attr)
 
-        via_device = None
+        parent_info = {}
         if not isinstance(device, (GatewayDevice, WifiPanelDevice)):
-            via_device = (DOMAIN, device.gateway.device.id)
+            if 'via_device_id' in DeviceInfo.__annotations__:
+                if parent_id := _gateway_registry_id(device):
+                    parent_info['via_device_id'] = parent_id
+            elif device.gateway is not None and device.gateway.device is not None:
+                parent_info['via_device'] = (DOMAIN, device.gateway.device.id)
         self._attr_device_info = DeviceInfo(
             identifiers={(DOMAIN, device.id)},
             name=device.name,
             model=str(device.pid or device.type or ''),
-            via_device=via_device,
+            **parent_info,
             sw_version=device.firmware_version,
             manufacturer=DEFAULT_NAME,
         )

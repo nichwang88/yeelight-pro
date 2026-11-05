@@ -2,6 +2,7 @@
 import logging
 
 from homeassistant.core import callback
+from homeassistant.const import UnitOfTemperature
 from homeassistant.components.climate import (
     ClimateEntity,
     ClimateEntityFeature,
@@ -30,6 +31,9 @@ from . import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+_TEMPERATURE_ATTR_PREFIX = (
+    '_attr_native_' if hasattr(ClimateEntity, 'native_temperature_unit') else '_attr_'
+)
 
 
 def setuper(add_entities):
@@ -79,13 +83,16 @@ class XClimateEntity(XEntity, ClimateEntity, RestoreEntity):
 
         self._attr_hvac_mode = HVACMode.OFF
         self._attr_fan_mode = None
-        self._attr_temperature_unit = self.hass.config.units.temperature_unit
+        setattr(self, _TEMPERATURE_ATTR_PREFIX + 'temperature_unit', UnitOfTemperature.CELSIUS)
         self._attr_target_temperature_step = 1
 
     @callback
     def async_set_state(self, data: dict):
         for k, v in data.items():
-            setattr(self, k, v)
+            if k in ('current_temperature', 'target_temperature'):
+                setattr(self, _TEMPERATURE_ATTR_PREFIX + k, v)
+            else:
+                setattr(self, k, v)
         self._attr_hvac_mode = self.mode if self.is_on else HVACMode.OFF
 
 
@@ -153,7 +160,7 @@ class BathHeaterClimateEntity(XEntity, ClimateEntity, RestoreEntity):
         )
 
         self._attr_hvac_mode = HVACMode.OFF
-        self._attr_temperature_unit = self.hass.config.units.temperature_unit
+        setattr(self, _TEMPERATURE_ATTR_PREFIX + 'temperature_unit', UnitOfTemperature.CELSIUS)
         self._attr_target_temperature_step = 1
         self._attr_min_temp = 16
         self._attr_max_temp = 40
@@ -163,9 +170,9 @@ class BathHeaterClimateEntity(XEntity, ClimateEntity, RestoreEntity):
         if 'is_on' in data:
             self.is_on = data['is_on']
         if 'current_temperature' in data:
-            self._attr_current_temperature = data['current_temperature']
+            setattr(self, _TEMPERATURE_ATTR_PREFIX + 'current_temperature', data['current_temperature'])
         if 'target_temperature' in data:
-            self._attr_target_temperature = data['target_temperature']
+            setattr(self, _TEMPERATURE_ATTR_PREFIX + 'target_temperature', data['target_temperature'])
         if 'bath_heater_mode' in data:
             self.bath_heater_mode = data['bath_heater_mode']
             self._attr_extra_state_attributes['bath_heater_mode'] = data['bath_heater_mode']

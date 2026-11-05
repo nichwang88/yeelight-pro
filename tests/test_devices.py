@@ -4,7 +4,7 @@ from homeassistant.core import HomeAssistant
 from custom_components.yeelight_pro.core.device import (
     XDevice,
     LightDevice,
-    RelayDevice,
+    RelayDoubleDevice,
     SwitchPanelDevice,
 )
 from .test_gateway import get_gateway
@@ -34,11 +34,12 @@ def test_light():
     data = device.decode(prop)
     assert data['light'] is True
     assert data['brightness'] == round(255 * 20 / 100)
-    assert data['color_temp'] == int(1000000.0 / 4000)
+    assert data['color_temp_kelvin'] == 4000
 
 
 def test_refresh_node_updates_light_from_gateway_readback():
     class Entity:
+        _name = 'light'
         subscribed_attrs = {'light'}
         added = False
 
@@ -49,6 +50,9 @@ def test_refresh_node_updates_light_from_gateway_readback():
             self.states.append(data)
 
     class Gateway:
+        async def setup_entity(self, domain, device, converter):
+            pass
+
         async def send(self, method, **kwargs):
             assert method == 'gateway_get.node'
             assert kwargs == {'params': {'id': 1270}}
@@ -78,7 +82,7 @@ def test_refresh_node_updates_light_from_gateway_readback():
 def test_relay():
     node = {"id": 1273, "nt": 2, "n": "双路继电器", "type": 7}
     device = asyncio.run(XDevice.from_node(gateway, node))
-    assert isinstance(device, RelayDevice)
+    assert isinstance(device, RelayDoubleDevice)
 
     prop = {
         "id": 1273, "nt": 2, "pid": 0, "pt": 7, "o": True,
